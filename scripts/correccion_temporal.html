@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Corrección temporal por archivo</title>
+<style>
+:root{color-scheme:light;--plano:#f9f9f7;--sup:#fcfcfb;--tx:#0b0b0b;--tx2:#52514e;--grid:#e1e0d9;--eje:#c3c2b7;--borde:rgba(11,11,11,.10);--codigo:#f0efec;--aviso:#d03b3b}
+@media (prefers-color-scheme:dark){:root{color-scheme:dark;--plano:#0d0d0d;--sup:#1a1a19;--tx:#f0efec;--tx2:#c3c2b7;--grid:#2c2c2a;--eje:#383835;--borde:rgba(255,255,255,.10);--codigo:#262624}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--plano);color:var(--tx);font:16px/1.6 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:860px;margin:0 auto;padding:40px 22px 72px}
+h1{font-size:30px;line-height:1.2;margin:0 0 10px}
+h2{font-size:22px;margin:44px 0 10px}
+h3{font-size:17px;margin:24px 0 6px}
+p{margin:0 0 12px}
+li{margin-bottom:6px}
+.sub{color:var(--tx2);font-size:18px;margin-bottom:24px}
+code{background:var(--codigo);padding:1px 5px;border-radius:4px;font:.88em ui-monospace,SFMono-Regular,Menlo,monospace}
+pre{background:var(--codigo);padding:14px 16px;border-radius:8px;overflow-x:auto;font:13.5px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace}
+pre code{background:none;padding:0;font:inherit}
+.formula{background:var(--sup);border:1px solid var(--borde);border-radius:8px;padding:14px;text-align:center;font:16px ui-monospace,SFMono-Regular,Menlo,monospace;margin:12px 0;overflow-x:auto}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin:18px 0 12px}
+.tile{background:var(--sup);border:1px solid var(--borde);border-radius:10px;padding:14px 16px}
+.tile b{display:block;font-size:26px;line-height:1.25;font-weight:600}
+.tile span{color:var(--tx2);font-size:14px;line-height:1.35;display:block;margin-top:4px}
+.nota{border-left:3px solid var(--eje);padding:2px 0 2px 14px;margin:16px 0;color:var(--tx2)}
+.alerta{background:var(--sup);border:1px solid var(--borde);border-left:4px solid var(--aviso);border-radius:8px;padding:12px 16px;margin:16px 0}
+.alerta strong:first-child::before{content:"⚠ "}
+.tabla{overflow-x:auto;margin:10px 0 16px}
+table{border-collapse:collapse;width:100%;font-size:14.5px;background:var(--sup)}
+th,td{padding:7px 10px;border-bottom:1px solid var(--grid);text-align:left;vertical-align:top}
+th{color:var(--tx2);font-weight:600;border-bottom-color:var(--eje)}
+.num td{font-variant-numeric:tabular-nums}
+</style>
+</head>
+<body>
+<main>
+<h1>Corrección temporal por archivo</h1>
+<p class="sub">Qué hace <code>read_bin.py</code>, cuánto se puede confiar en el resultado y qué se puede cambiar en el programa de adquisición.</p>
+
+<div class="tiles">
+  <div class="tile"><b>~11 → ~0,85 ns</b><span>dispersión del pulso de CH1 con delay de 600&nbsp;ns, en eventos que no entraron al ajuste</span></div>
+  <div class="tile"><b>Solo su archivo</b><span>cada archivo se corrige con sus propios eventos, sin mirar otros ni pedir datos del setup</span></div>
+  <div class="tile"><b>40 eventos</b><span>mínimo con pulso de CH1 para corregir; con menos, grafica con el <code>t</code> del archivo</span></div>
+</div>
+
+<h2>El problema</h2>
+<p>Las 1024 celdas del DRS4 no duran lo mismo. A 0,6&nbsp;GHz la placa no tiene calibración válida, así que el archivo guarda el mismo paso para todas: 1,66&nbsp;ns. El error se acumula a lo largo de la ventana. Esa acumulación se llama <code>I(c)</code>: cuánto se adelanta o se atrasa la celda <code>c</code> respecto del tiempo nominal.</p>
+
+<h2>Cómo se corrige</h2>
+<ol>
+  <li><strong>Busca el pulso de trigger.</strong> En cada evento del archivo, encuentra dónde CH1 cruza el umbral. Es el índice <code>x</code>, con interpolación entre muestras.</li>
+  <li><strong>Usa que el retardo es fijo.</strong> La placa frena el muestreo un tiempo fijo después del trigger. Por eso, el tiempo real desde el cruce hasta el final de la ventana (<code>T0</code>) es siempre igual. Si en índices nominales se mueve según <code>trigger_cell</code> (<code>tc</code>), ese movimiento viene de las celdas.</li>
+  <li><strong>Ajusta la curva.</strong> Con <code>δ = 1/f</code>, cada evento aporta una ecuación:
+    <div class="formula">(1024 − x)·δ + I(tc) − I(tc + x) = T0</div>
+    <code>I</code> es una curva de 12 puntos a lo largo del chip, con interpolación lineal entre ellos. Se resuelve con mínimos cuadrados (<code>np.linalg.lstsq</code>), sacando los eventos muy alejados.</li>
+  <li><strong>Corrige el evento elegido</strong> y grafica los cuatro canales con:
+    <div class="formula">t[i] = i·δ + I(tc + i) − I(tc)</div></li>
+</ol>
+
+<h2>Cómo usarlo</h2>
+<p>Editá las líneas de arriba de <code>read_bin.py</code> y correlo:</p>
+<pre><code>archivo = "ruta/al/archivo.bin"
+n_puntos = 12</code></pre>
+<pre><code>cd nuevo_codigo/scripts
+python3 read_bin.py</code></pre>
+<p>Calcula la curva una sola vez con todos los eventos del archivo y después grafica los eventos de a uno, ya corregidos (cerrar el gráfico para pasar al siguiente). Además de los datos del archivo, imprime la dispersión del cruce antes y después y cuánto se movió el evento. Esa dispersión usa todos los eventos del archivo, incluidos los del ajuste, así que puede dar un poco mejor que la tabla de abajo. El script no modifica el <code>.bin</code>.</p>
+<p>No corrige si hay menos de 40 eventos con cruce de CH1: en ese caso imprime el motivo y grafica con el <code>t</code> del archivo. Si el <code>t</code> ya venía calibrado por la placa, lo reemplaza igual y avisa.</p>
+
+<h2>Resultados</h2>
+<p>Dispersión del cruce de CH1, con validación cruzada: cada evento se evalúa con una curva ajustada sin él, siempre dentro del mismo archivo.</p>
+<div class="tabla"><table class="num">
+<tr><th>Datos</th><th>Delay</th><th>Eventos por archivo</th><th>Nominal</th><th>Corregido</th></tr>
+<tr><td><code>decaimiento</code> (12 archivos)</td><td>600 ns</td><td>195–253</td><td>~11 ns</td><td>~0,85 ns</td></tr>
+<tr><td><code>eficiencia/132</code>, <code>213</code></td><td>600 ns</td><td>133–252</td><td>~11 ns</td><td>~0,85 ns</td></tr>
+<tr><td><code>test_trigger/trigger_500</code></td><td>500 ns</td><td>106–201</td><td>~10 ns</td><td>~0,87 ns</td></tr>
+<tr><td><code>test_trigger/trigger_1000</code></td><td>1000 ns</td><td>172–193</td><td>~12 ns</td><td>~0,8 ns</td></tr>
+<tr><td><code>test_trigger/trigger_100</code></td><td>100 ns</td><td>42–204</td><td>~2,3 ns</td><td>~0,9 ns</td></tr>
+<tr><td><code>eficiencia/123</code></td><td>1740 ns</td><td>53–722</td><td>~6,5 ns</td><td>~1 ns</td></tr>
+</table></div>
+<p>Los tiempos corregidos son crecientes en todos los casos, con un paso mínimo de ~1,6&nbsp;ns. En los ~11&nbsp;ns, el error más visible es la posición del pulso dentro de la ventana.</p>
+
+<h2>Límites</h2>
+<ul>
+  <li><strong>Pulsos muy separados, según el delay:</strong> la amplitud de <code>I(c)</code> da 4,8–5,3&nbsp;ns rms con delays de 500 a 1000&nbsp;ns, pero 3,1&nbsp;ns con 100&nbsp;ns y 6,6&nbsp;ns con 1740&nbsp;ns. Todavía no sé por qué. Con esos dos delays, <code>t2 − t1</code> puede quedar 2–4&nbsp;ns distinto de una calibración que junta varias corridas. Con 500 a 1000&nbsp;ns, la diferencia es de ~1&nbsp;ns.</li>
+  <li><strong>Forma suave, no celda por celda:</strong> 12 puntos equivalen a uno cada ~85 celdas. El ancho individual de cada celda no se corrige.</li>
+  <li><strong>Solo CH1:</strong> la curva de CH1 se aplica a los cuatro canales, aunque cada canal tiene su patrón. No mide el desfase entre canales, cables ni PMT: para eso hace falta dividir un mismo pulso.</li>
+  <li><strong>Residuo de ~1 ns:</strong> incluye jitter de trigger, ruido y lo que la curva no capta, así que no es la resolución de la corrección.</li>
+  <li><strong>A 5&nbsp;GHz puede empeorar los tiempos:</strong> el error real ahí es chico (0,39&nbsp;ns rms). En una simulación con esa calibración y 200 eventos, la curva erró 0,15–0,22&nbsp;ns con jitter de 0,05&nbsp;ns, pero 0,4&nbsp;ns con jitter de 0,2&nbsp;ns, tanto como el error a corregir. Con <code>T0</code> cerca de media ventana (~100&nbsp;ns) erró 0,6–2&nbsp;ns. Todavía no hay datos reales a 5&nbsp;GHz con pulsos en la ventana.</li>
+  <li><strong>Archivos cortos:</strong> el último archivo de una corrida suele tener pocos eventos y puede quedar sin corregir.</li>
+</ul>
+
+<div class="alerta"><strong>Revisá <code>velocidad</code>.</strong> Se midió a 5,12&nbsp;GHz con delay de 600&nbsp;ns, pero la ventana dura 200&nbsp;ns. Solo 7 de 3308 eventos tienen cruce de CH1, así que el pulso de trigger parece haber quedado fuera de la ventana. El <code>t</code> guardado está calibrado por la placa, pero la corrida no parece servir para tiempo de vuelo.</div>
+
+<h2>¿Se puede evitar con cambios en el código?</h2>
+<p><strong>La necesidad de calibrar, no.</strong> El ancho de las celdas es una propiedad analógica del chip, así que ni el programa ni el firmware pueden hacer que sean iguales: solo se pueden medir. Lo que sí se puede evitar es esta estimación posterior, y detectar antes los problemas.</p>
+
+<h3>1. Calibrar a la frecuencia de medición: la solución de fondo</h3>
+<p>Sin tocar código: con <code>tcalib</code> a la frecuencia de trabajo, <code>GetTime</code> pasa a dar tiempos calibrados, celda por celda.</p>
+<ul>
+  <li><strong>Pisa la calibración actual:</strong> la placa guarda una sola, así que antes conviene exportarla con una corrida corta en DRSOsc.</li>
+  <li><strong>Mejor a 0,7&nbsp;GHz:</strong> es el mínimo garantizado por el datasheet. Se pide con <code>FRECUENCIA_GHZ 0.7</code> en <code>src/config.h</code>, y la ventana sería de ~1,46&nbsp;µs. La calibración usa un reloj de 100&nbsp;MHz, con pocas muestras por período a estas frecuencias, así que hay que validarla.</li>
+</ul>
+
+<h3>2. Cambios en <code>main.cpp</code></h3>
+<p>Estado al 14/11/2026:</p>
+<div class="tabla"><table>
+<tr><th>Cambio</th><th>Qué evita</th><th>Estado</th></tr>
+<tr><td><strong>Avisar con <code>IsTimingCalibrationValid()</code></strong></td><td>Bins nominales sin aviso</td><td><strong>Hecho.</strong> Al arrancar avisa si la placa no tiene calibración temporal para la frecuencia pedida</td></tr>
+<tr><td><strong>Registrar el estado en <code>FileHeader.flags</code></strong></td><td>Tener que deducir de los bins si un archivo está calibrado</td><td><strong>Hecho.</strong> Bit 0 = <code>t</code> calibrado por la placa (archivos versión 2). También queda en el <code>_info.txt</code> de la corrida</td></tr>
+<tr><td><strong>Controlar posición del pulso y ventana al arrancar</strong></td><td>Otra corrida como <code>velocidad</code>, sin pulso en la ventana</td><td><strong>Hecho.</strong> Ahora se pide la posición del pulso desde el comienzo de la ventana (<code>POSICION_PULSO_NS</code>); si no entra, el programa no arranca y dice el rango posible</td></tr>
+<tr><td><strong>Guardar los anchos de celda por canal</strong> en el archivo, con <code>GetTimeCalibration(0, 2*c, 0, dt)</code></td><td>Perder la calibración por canal: hoy solo se guarda el <code>t</code> de CH1</td><td>Pendiente: cambia el formato y los scripts</td></tr>
+<tr><td><strong>Dejar de guardar <code>t</code> en cada evento</strong>, si se guardan los anchos</td><td>Una columna repetida: reduce cada evento un 20&nbsp;%</td><td>Pendiente: solo vale junto con el cambio anterior</td></tr>
+</table></div>
+<p class="nota">Guardar los anchos no resuelve el caso de 0,6&nbsp;GHz por sí solo: sin calibración válida, se guardarían anchos nominales. Sirve una vez hecho el paso 1.</p>
+<p class="nota">En los archivos viejos el comentario dice <code>delay=…ns</code>: ese número era el tiempo desde el pulso hasta el <em>final</em> de la ventana, no desde el comienzo. En los nuevos dice <code>pos=…ns</code>, contado desde el comienzo. No revisé el código VHDL del firmware; la conclusión sobre el firmware sale de que el efecto es analógico.</p>
+</main>
+</body>
+</html>

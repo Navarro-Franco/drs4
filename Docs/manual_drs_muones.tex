@@ -1,0 +1,870 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[spanish,es-noshorthands]{babel}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage[margin=2.4cm]{geometry}
+\usepackage{microtype}
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,fit,backgrounds}
+\usepackage{tcolorbox}
+\usepackage{enumitem}
+\usepackage{caption}
+\usepackage{fancyhdr}
+\setlength{\emergencystretch}{3em}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=black,
+  urlcolor=blue!60!black,
+  pdftitle={Manual de drs\_muones},
+  pdfauthor={Laboratorio 5 - muones}
+}
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small drs\_muones: adquisición continua DRS4}
+\fancyhead[R]{\small Laboratorio 5}
+\fancyfoot[C]{\thepage}
+
+\definecolor{codebg}{RGB}{248,248,248}
+\definecolor{codekw}{RGB}{0,102,153}
+\definecolor{codecm}{RGB}{90,120,90}
+
+\lstdefinestyle{cpp}{
+  language=C++,
+  backgroundcolor=\color{codebg},
+  basicstyle=\ttfamily\small,
+  keywordstyle=\color{codekw}\bfseries,
+  commentstyle=\color{codecm}\itshape,
+  stringstyle=\color{red!60!black},
+  numbers=none,
+  frame=single,
+  rulecolor=\color{gray!40},
+  breaklines=true,
+  columns=fullflexible,
+  keepspaces=true,
+  showstringspaces=false,
+  tabsize=3
+}
+
+\lstdefinestyle{shell}{
+  language=,
+  backgroundcolor=\color{codebg},
+  basicstyle=\ttfamily\small,
+  frame=single,
+  rulecolor=\color{gray!40},
+  breaklines=true,
+  columns=fullflexible,
+  keepspaces=true,
+  showstringspaces=false
+}
+
+\lstdefinestyle{py}{
+  language=Python,
+  backgroundcolor=\color{codebg},
+  basicstyle=\ttfamily\small,
+  keywordstyle=\color{codekw}\bfseries,
+  commentstyle=\color{codecm}\itshape,
+  stringstyle=\color{red!60!black},
+  frame=single,
+  rulecolor=\color{gray!40},
+  breaklines=true,
+  columns=fullflexible,
+  keepspaces=true,
+  showstringspaces=false
+}
+
+\newtcolorbox{aviso}[1][]{
+  colback=orange!6,
+  colframe=orange!60!black,
+  boxrule=0.4pt,
+  left=4pt,right=4pt,top=3pt,bottom=3pt,
+  fonttitle=\bfseries,
+  title=Advertencia,
+  #1
+}
+
+\newtcolorbox{nota}[1][]{
+  colback=blue!4,
+  colframe=blue!40!black,
+  boxrule=0.4pt,
+  left=4pt,right=4pt,top=3pt,bottom=3pt,
+  fonttitle=\bfseries,
+  title=Nota,
+  #1
+}
+
+\newcommand{\code}[1]{\texttt{#1}}
+
+\title{\textbf{drs\_muones}\\[0.3em]
+\large Adquisición continua con la DRS4 Evaluation Board\\
+\large y almacenamiento binario}
+\author{Laboratorio 5 -- experiencia de muones}
+\date{Noviembre 2026}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+\noindent
+Este manual describe \code{drs\_muones}, un programa de adquisición continua para la
+DRS4 Evaluation Board. El programa usa la librería del repositorio oficial
+\code{drs4eb}: lee los cuatro canales de entrada, usa la entrada CH1 como trigger por
+hardware, opcionalmente filtra los eventos (coincidencia entre canales y veto), los
+encola en memoria RAM y los escribe en disco en un formato binario compacto y fácil
+de leer desde Python. Está pensado para corridas largas (horas o días) con tasas
+bajas, como la detección de muones cósmicos. Toda la configuración está en un solo
+archivo, \code{src/config.h}.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+%=====================================================================
+\section{Guía rápida}
+%=====================================================================
+
+\begin{enumerate}[itemsep=2pt]
+  \item Abrir \code{nuevo\_codigo/src/config.h} con un editor de texto, cambiar los
+        valores que hagan falta y guardar.
+  \item En una terminal, parado en \code{nuevo\_codigo}, correr \code{./medir.sh}.
+        El script compila (solo si cambió algo) y empieza a medir.
+  \item Para terminar, apretar Ctrl+C \textbf{una sola vez} y esperar el resumen.
+\end{enumerate}
+
+Los datos quedan en la carpeta indicada en \code{CARPETA\_SALIDA}. Para probar sin
+placa: \code{./medir.sh --selftest 100}.
+
+\subsection{Cambios de noviembre de 2026}
+
+\begin{itemize}[itemsep=2pt]
+  \item \textbf{Posición del pulso.} Antes se configuraba \code{TRIGGER\_DELAY\_NS},
+        que la placa cuenta hacia atrás desde el \emph{final} de la ventana: con
+        600\,ns el pulso aparecía cerca de 1100\,ns. Ahora se configura
+        \code{POSICION\_PULSO\_NS}, contado desde el \emph{comienzo} de la ventana
+        (sección~\ref{sec:posicion}).
+  \item \textbf{Carpeta de salida.} Si la carpeta se escribía sin barra final
+        (\code{"ang\_0"}), los archivos quedaban afuera, con nombre
+        \code{ang\_0run\_...bin}. Corregido: siempre quedan adentro de la carpeta.
+  \item \textbf{Filtro de eventos} opcional: canales requeridos en coincidencia y
+        canales de veto (sección~\ref{sec:filtro}).
+  \item \textbf{Configuración} en castellano, con controles: un valor sin sentido da
+        un mensaje claro al compilar. Ya no se pasan parámetros por CMake.
+  \item \textbf{Archivo \code{\_info.txt}} por corrida, con la configuración y el
+        resumen (triggers, guardados, descartados, duración).
+  \item La línea de estado se imprime también mientras se espera un trigger.
+  \item El formato binario no cambió de tamaño ni de orden: los scripts y los
+        archivos anteriores siguen sirviendo (sección~\ref{sec:formato}).
+\end{itemize}
+
+%=====================================================================
+\section{Hardware y conexionado}
+%=====================================================================
+
+La placa expone cuatro entradas SMA. Cada entrada está conectada a \emph{dos} canales
+del chip DRS4, que se usan en pares para el modo de cascada:
+
+\begin{center}
+\begin{tabular}{ccc}
+\toprule
+Entrada SMA & Canal DRS usado & Columna en el archivo \\
+\midrule
+SMA1 & 0 & ch1 \\
+SMA2 & 2 & ch2 \\
+SMA3 & 4 & ch3 \\
+SMA4 & 6 & ch4 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+El programa transfiere los canales 0 a 6 en una sola operación
+(\code{TransferWaves(0, 6)}) y decodifica los cuatro canales pares. La columna de
+tiempo \code{t} se toma de CH1.
+
+\begin{nota}
+El trigger es \textbf{por hardware en CH1} (entrada SMA1). Los otros canales no
+disparan: se registran y, si el filtro está activado, se usan para decidir si el
+evento se guarda.
+\end{nota}
+
+La entrada es de 1\,Vpp ($-0{,}5$\,V a $+0{,}5$\,V). Conviene atenuar la señal del PMT
+o SiPM para no recortar; el programa marca los eventos saturados con un bit.
+
+%=====================================================================
+\section{Instalación y permisos}
+%=====================================================================
+
+\subsection{Dependencias}
+
+En Debian/Raspberry Pi OS y en Ubuntu:
+
+\begin{lstlisting}[style=shell]
+sudo apt install build-essential cmake libusb-1.0-0-dev
+\end{lstlisting}
+
+Para los scripts de análisis: \code{sudo apt install python3-numpy python3-matplotlib}.
+
+\subsection{Permisos de USB}
+
+Sin una regla de udev, la placa solo es accesible como \code{root}. La regla está en
+\code{codigo\_rp5/41-drs.rules}; el contenido es:
+
+\begin{lstlisting}[style=shell]
+ATTRS{idVendor}=="04b4", ATTRS{idProduct}=="1175", SUBSYSTEMS=="usb",
+ACTION=="add", MODE="0666", GROUP="plugdev"
+\end{lstlisting}
+
+Para instalarla:
+
+\begin{lstlisting}[style=shell]
+sudo cp 41-drs.rules /etc/udev/rules.d/
+sudo udevadm control --reload-rules
+sudo udevadm trigger
+\end{lstlisting}
+
+y asegurarse de que el usuario pertenece al grupo \code{plugdev} (\code{groups}).
+Tras reconectar la placa, queda accesible sin \code{sudo}.
+
+%=====================================================================
+\section{Compilación}
+%=====================================================================
+
+Lo normal es no compilar a mano: \code{./medir.sh} lo hace solo cada vez que cambia
+\code{config.h}. Si falla, muestra la línea de \code{config.h} que tiene el problema
+y deja el detalle en \code{build/compilacion.log}.
+
+A mano, es:
+
+\begin{lstlisting}[style=shell]
+cd sobre_drs/nuevo_codigo
+cmake -S . -B build
+cmake --build build -j"$(nproc)"
+\end{lstlisting}
+
+El ejecutable queda en \code{build/drs\_muones}. La variable \code{DRS4EB\_DIR} indica
+dónde está \code{software/} del repositorio oficial; por defecto apunta a
+\code{../drs4eb/software}. Se compila optimizado (\code{Release}).
+
+\begin{aviso}
+Los parámetros son valores de compilación: cambiar \code{config.h} no tiene efecto
+hasta volver a compilar. Con \code{./medir.sh} eso es automático; si se corre
+\code{./build/drs\_muones} directamente, hay que compilar antes. Además, la carpeta
+de salida es relativa al lugar desde donde se corre el programa: \code{./medir.sh}
+siempre la crea dentro de \code{nuevo\_codigo}.
+\end{aviso}
+
+Las versiones anteriores permitían pisar parámetros con \code{cmake -DNOMBRE=valor}.
+Eso se quitó para que haya un solo lugar donde mirar la configuración.
+
+%=====================================================================
+\section{Configuración: \code{config.h} en detalle}
+%=====================================================================
+
+Reglas para editar el archivo: cambiar solo el valor que está a la derecha del
+nombre; decimales con punto; textos entre comillas dobles.
+
+\begin{center}
+\small
+\begin{longtable}{p{4.6cm}p{2.0cm}p{8.0cm}}
+\toprule
+Parámetro & Defecto & Efecto \\
+\midrule
+\endhead
+\code{CARPETA\_SALIDA} & \code{"medidas"} & Carpeta donde se guardan los archivos. Se crea si no existe. \\
+\code{MINUTOS\_POR\_ARCHIVO} & 15 & Cada cuánto se cierra el archivo y se abre otro. \\
+\code{FRECUENCIA\_GHZ} & 0.6 & Frecuencia de muestreo (0{,}1 a 6). Fija el paso temporal y la ventana. \\
+\code{UMBRAL\_TRIGGER\_MV} & $-125$ & Nivel de trigger sobre CH1, en mV. \\
+\code{PULSOS\_NEGATIVOS} & 1 & 1 = pulsos negativos, 0 = positivos. Vale para el trigger y el filtro. \\
+\code{POSICION\_PULSO\_NS} & 300 & Dónde aparece el pulso de trigger, en ns desde el comienzo de la ventana. \\
+\code{FILTRO\_ACTIVADO} & 0 & 0 = se guarda todo; 1 = se guarda solo lo que cumple el filtro. \\
+\code{FILTRO\_CH1} \ldots\ \code{FILTRO\_CH4} & R, R, I, V & \code{REQUERIDO}, \code{IGNORAR} o \code{VETO}, por canal. \\
+\code{UMBRAL\_CH1\_MV} \ldots\ \code{UMBRAL\_CH4\_MV} & $-125$ & Umbral de cada canal para decidir si tuvo un pulso. \\
+\code{VENTANA\_COINCIDENCIA\_NS} & 50 & Separación máxima entre los pulsos de los canales \code{REQUERIDO}. \\
+\code{SEGUNDOS\_ENTRE\_ESTADOS} & 5 & Periodicidad de la línea de estado. \\
+\code{IMPRIMIR\_CADA\_EVENTO} & 0 & 1 = una línea por trigger, con la decisión del filtro. \\
+\code{SATURACION\_MV} & 480 & Umbral para marcar un evento como saturado (no descarta). \\
+\code{EVENTOS\_EN\_COLA} & 2000 & Tamaño de la cola en RAM ($\approx$ 20\,KB por evento). \\
+\code{FORZAR\_ESCRITURA\_A\_DISCO} & 1 & \code{fsync} al cerrar cada archivo. \\
+\code{ESPERA\_SONDEO\_US} & 500 & Espera entre consultas a la placa mientras se espera trigger. \\
+\code{NS\_POR\_TICK} & 5.54 & Calibración de la posición del pulso (sección~\ref{sec:posicion}). \\
+\bottomrule
+\end{longtable}
+\end{center}
+
+Si un valor no tiene sentido (un modo de filtro mal escrito, un umbral con el signo
+contrario al de los pulsos, una frecuencia fuera de rango), la compilación se
+detiene con un mensaje en castellano que nombra el parámetro.
+
+%---------------------------------------------------------------------
+\subsection{Frecuencia de muestreo}
+%---------------------------------------------------------------------
+
+\code{FRECUENCIA\_GHZ} fija cuántas muestras por segundo toma el chip. El datasheet
+garantiza de 0{,}7 a 5\,GSPS. Como la memoria analógica tiene 1024 celdas, la ventana
+es
+\[
+  T_{\text{ventana}} = \frac{1024}{f_s}.
+\]
+A 0{,}6\,GSPS la ventana es de 1{,}70\,µs y el paso temporal 1{,}66\,ns; a 5\,GSPS la
+ventana baja a 205\,ns y el paso a 0{,}2\,ns. La placa no da exactamente la
+frecuencia pedida (pidiendo 0{,}6 da 0{,}6024); la real se imprime al arrancar y es
+la que queda en el archivo.
+
+\begin{aviso}
+La calibración temporal de la placa vale para una sola frecuencia. Si no coincide con
+la de medición, el programa avisa al arrancar y los tiempos guardados suponen
+muestras de igual duración; el error llega a $\sim$10\,ns a 0{,}6\,GHz. Ver
+\code{scripts/correccion\_temporal.html}.
+\end{aviso}
+
+%---------------------------------------------------------------------
+\subsection{Umbral y polaridad del trigger}
+%---------------------------------------------------------------------
+
+\code{UMBRAL\_TRIGGER\_MV} es el nivel que debe cruzar CH1 para disparar.
+\code{PULSOS\_NEGATIVOS} elige el flanco: 1 dispara cuando la señal baja del umbral,
+0 cuando sube. El umbral es \textbf{absoluto}, no relativo a la línea de base. El
+programa no compila si el signo del umbral no es coherente con la polaridad.
+
+%---------------------------------------------------------------------
+\subsection{Posición del pulso en la ventana}
+\label{sec:posicion}
+%---------------------------------------------------------------------
+
+\code{POSICION\_PULSO\_NS} dice en qué tiempo de la ventana aparece el pulso que dio
+el trigger, contado desde el comienzo (el borde izquierdo del gráfico). Con 300 a
+0{,}6\,GHz, el pulso de CH1 aparece en $t \approx 300$\,ns: quedan 300\,ns de línea
+de base antes y 1400\,ns después.
+
+\subsubsection*{Por qué antes parecía estar al revés}
+
+El chip muestrea sin parar, en círculo. Cuando llega el trigger, la placa espera un
+tiempo y recién ahí frena; lo que se lee son los 1024 bins \emph{anteriores} al
+frenado. Ese tiempo de espera es lo que la librería llama ``trigger delay''. Por eso
+el retardo se cuenta hacia atrás desde el final de la ventana:
+\[
+  t_{\text{pulso}} = T_{\text{ventana}} - t_{\text{fijo}} - n_{\text{ticks}} \cdot \tau .
+\]
+$n_{\text{ticks}}$ (0 a 255) es lo que se programa en la placa, $\tau$ es lo que dura
+un tick y $t_{\text{fijo}} = 23{,}5 + 28{,}2/f_s$\,ns es un retardo propio de la
+placa (fórmula de la librería; 70\,ns a 0{,}6\,GHz). La versión anterior del programa
+pasaba \code{TRIGGER\_DELAY\_NS} directo a la placa, y de ahí que con \code{delay=600}
+el pulso apareciera en $\approx$1100\,ns y no en 600. El programa ahora despeja
+$n_{\text{ticks}}$ de esa ecuación.
+
+\subsubsection*{Calibración}
+
+La librería supone $\tau = 6{,}2$\,ns. Medido con esta placa (serie 2566, firmware
+21305) a 0{,}6024\,GHz, con las corridas de octubre y noviembre de 2026:
+
+\begin{center}
+\begin{tabular}{rrrr}
+\toprule
+\code{delay} pedido (ns) & Ticks & Pulso medido (ns) & Fórmula con $\tau=5{,}54$ (ns) \\
+\midrule
+100 & 16 & 1541 & 1541 \\
+500 & 81 & 1184 & 1181 \\
+600 & 97 & 1100 & 1092 \\
+1000 & 161 & 734 & 738 \\
+1740 & 255 (tope) & 220 & 217 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+El ajuste da $\tau = 5{,}54$\,ns por tick, con diferencias de hasta 8\,ns. Ese valor
+está en \code{NS\_POR\_TICK}. Conviene contar con que el pulso quede a $\pm$10\,ns de
+lo pedido. A otras frecuencias no hay mediciones: se usa la misma fórmula y hay que
+verificar con datos dónde quedó el pulso.
+
+\subsubsection*{Rango alcanzable}
+
+Como hay solo 256 ticks, no se puede poner el pulso en cualquier lado:
+
+\begin{center}
+\begin{tabular}{rrr}
+\toprule
+$f_s$ (GHz) & Ventana (ns) & Posición alcanzable (ns) \\
+\midrule
+0.6 & 1700 & 220 a 1630 \\
+1.0 & 1024 & 0 a 970 \\
+2.0 & 512 & 0 a 475 \\
+5.0 & 205 & 0 a 176 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Si se pide un valor fuera del rango, el programa usa el más cercano y lo avisa. Si
+se pide una posición mayor que la ventana, no arranca. Al arrancar siempre imprime
+la posición que va a usar, y queda en el comentario del archivo (\code{pos=...ns}).
+
+\begin{nota}
+Para verificar o recalibrar: medir unos minutos, abrir un archivo con
+\code{scripts/01\_ver\_un\_evento.py} y mirar en qué $t$ cruza CH1 el umbral. Si la
+diferencia con lo pedido es sistemática, corregir \code{NS\_POR\_TICK}: un valor más
+grande mueve el pulso hacia la derecha.
+\end{nota}
+
+%---------------------------------------------------------------------
+\subsection{Filtro de eventos}
+\label{sec:filtro}
+%---------------------------------------------------------------------
+
+Con \code{FILTRO\_ACTIVADO 0} se guarda todo evento que dispara CH1. Con
+\code{FILTRO\_ACTIVADO 1}, cada evento se revisa antes de guardarlo. A cada canal se
+le asigna uno de tres papeles:
+
+\begin{center}
+\begin{tabular}{lp{11cm}}
+\toprule
+Valor & Significado \\
+\midrule
+\code{REQUERIDO} & Tiene que haber un pulso en este canal. Si no, el evento se descarta. \\
+\code{IGNORAR} & El canal no participa de la decisión (igual se guarda). \\
+\code{VETO} & Si hay un pulso en este canal, el evento se descarta. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+``Hay un pulso'' significa que alguna muestra del canal pasó su umbral
+(\code{UMBRAL\_CHn\_MV}), sin contar las 8 muestras de cada borde de la ventana,
+donde el chip suele dejar picos espurios. El tiempo del pulso es el del primer cruce
+del umbral, interpolado entre dos muestras.
+
+El orden de la decisión es:
+
+\begin{enumerate}[itemsep=2pt]
+  \item Si algún canal \code{VETO} tiene pulso, en cualquier lugar de la ventana:
+        descartado.
+  \item Si a algún canal \code{REQUERIDO} le falta el pulso: descartado.
+  \item Si entre el primer y el último pulso de los canales \code{REQUERIDO} hay más
+        de \code{VENTANA\_COINCIDENCIA\_NS}: descartado.
+  \item Si no, se guarda.
+\end{enumerate}
+
+La configuración que viene escrita (CH1 y CH2 requeridos, CH3 ignorado, CH4 veto,
+ventana de 50\,ns) guarda los eventos con pulso casi simultáneo en CH1 y CH2 y sin
+nada en CH4. Solo hace falta poner \code{FILTRO\_ACTIVADO} en 1.
+
+\begin{aviso}
+Lo que el filtro descarta \textbf{no se guarda} y no se puede recuperar. Antes de una
+corrida larga conviene medir un rato sin filtro y probar el criterio sobre esos
+datos con \code{scripts/02\_filtrar\_eventos.py}, que aplica la misma lógica. Como
+referencia, en la corrida \code{eficiencia/132} (1446 eventos), pedir CH1 y CH2 con
+$-125$\,mV deja 171 eventos, el 12\,\%: en la mayoría, el pulso de CH2 no llega a
+$-125$\,mV.
+\end{aviso}
+
+Elección de los umbrales: en los datos de 2026 el ruido de CH1 a CH3 tiene picos de
+entre $-40$ y $-65$\,mV sin que haya pulso, así que un umbral menos exigente que eso
+da coincidencias falsas. Para un canal de veto sin nada conectado (CH4 quedó en
+$-6 \pm 1$\,mV) cualquier umbral lejos de cero sirve.
+
+La ventana de coincidencia: en los mismos datos, la diferencia $t_2 - t_1$ entre los
+pulsos de CH2 y CH1 de un mismo muon está entre $-5$ y $+10$\,ns; 50\,ns deja margen
+para el error de los tiempos sin calibrar ($\sim$10\,ns). El histograma que hace
+\code{02\_filtrar\_eventos.py} sirve para elegirla.
+
+Con \code{IMPRIMIR\_CADA\_EVENTO 1} se ve la decisión de cada trigger:
+
+\begin{lstlisting}[style=shell]
+trigger #2: guardado | CH1 en 303.0 ns CH2 en 304.6 ns CH3 en 306.5 ns CH4 sin pulso
+trigger #3: descartado: falta el pulso en un canal REQUERIDO | CH1 en 301.9 ns ...
+\end{lstlisting}
+
+El campo \code{event\_index} de cada evento cuenta todos los triggers, también los
+descartados, así que en el archivo los índices saltan. Los totales quedan en el
+\code{\_info.txt}.
+
+%---------------------------------------------------------------------
+\subsection{Marca de saturación}
+%---------------------------------------------------------------------
+
+\code{SATURACION\_MV} no filtra: si alguna muestra de algún canal supera ese valor
+en valor absoluto, el evento se guarda con el bit 0 de \code{flags} encendido.
+
+%---------------------------------------------------------------------
+\subsection{Cola en RAM y rotación de archivos}
+%---------------------------------------------------------------------
+
+\code{EVENTOS\_EN\_COLA} define cuántos eventos pueden esperar en memoria mientras el
+hilo escritor los vuelca a disco. Cada evento ocupa 20\,496 bytes; con el valor por
+defecto son unos 41\,MB. Si la cola se llena, la adquisición \textbf{espera} hasta
+que haya lugar: no se pierde ningún evento ya leído, pero aumenta el tiempo muerto.
+
+\code{MINUTOS\_POR\_ARCHIVO} controla cada cuánto se cierra el archivo y se abre uno
+nuevo. A 0{,}25 triggers por segundo y 15 minutos, cada archivo pesa unos 4{,}6\,MB.
+El cambio de archivo se hace al escribir un evento, así que un archivo puede durar
+algo más si en ese momento no hay eventos.
+
+%=====================================================================
+\section{Cómo funciona por dentro}
+\label{sec:paralelo}
+%=====================================================================
+
+El programa tiene dos hilos que trabajan en paralelo:
+
+\begin{center}
+\begin{tikzpicture}[node distance=7mm, every node/.style={font=\small},
+  caja/.style={draw, rounded corners, inner sep=4pt, align=center}]
+  \node[caja] (trig) {esperar\\trigger};
+  \node[caja, right=of trig] (leer) {leer los\\4 canales};
+  \node[caja, right=of leer] (filt) {filtro};
+  \node[caja, right=of filt, fill=gray!15] (cola) {cola\\en RAM};
+  \node[caja, right=of cola] (disco) {escribir\\al disco};
+  \draw[-Stealth] (trig) -- (leer);
+  \draw[-Stealth] (leer) -- (filt);
+  \draw[-Stealth] (filt) -- (cola);
+  \draw[-Stealth] (cola) -- (disco);
+  \draw[-Stealth] (filt.south) -- ++(0,-5mm) -| (trig.south);
+  \node[below=9mm of leer] {hilo principal};
+  \node[below=9mm of disco] {hilo escritor};
+\end{tikzpicture}
+\end{center}
+
+El hilo principal arma la placa, espera el trigger, trae las ondas por USB, aplica el
+filtro y, si el evento pasa, lo copia a la cola. El hilo escritor saca eventos de la
+cola y los escribe. Así una escritura lenta (una tarjeta SD, un disco ocupado) no
+frena la medición mientras haya lugar en la cola.
+
+Lo que \textbf{no} es paralelo es la placa: mientras se leen las ondas de un evento
+(del orden de milisegundos por USB; no se midió en esta placa), no puede tomar otro. Ese tiempo muerto es propio del
+hardware. A las tasas de esta experiencia (menos de un trigger por segundo) es
+despreciable: menos del 1\,\% del tiempo.
+
+El filtro corre en el hilo principal porque es mucho más rápido que la lectura USB
+(recorre 4096 números) y así los eventos descartados ni siquiera ocupan lugar en la
+cola.
+
+%=====================================================================
+\section{Formato binario}
+\label{sec:formato}
+%=====================================================================
+
+Todos los valores son \textbf{little-endian}. El archivo empieza con un encabezado de
+128 bytes y continúa con eventos de tamaño fijo. Hay una explicación para quien
+nunca leyó un binario en \code{scripts/LEEME.md}.
+
+\subsection{Encabezado de archivo (128 bytes)}
+
+\begin{center}
+\small
+\begin{tabular}{rrl>{\raggedright\arraybackslash}p{7.4cm}}
+\toprule
+Offset & Tipo & Campo & Descripción \\
+\midrule
+0 & \code{char[8]} & \code{magic} & \code{"MUONBIN1"} \\
+8 & \code{u16} & \code{version} & 2 (1 en los archivos anteriores al 14/11/2026) \\
+10 & \code{u16} & \code{n\_channels} & 4 \\
+12 & \code{u32} & \code{n\_samples} & 1024 \\
+16 & \code{f64} & \code{sampling\_hz} & frecuencia real de muestreo \\
+24 & \code{u16} & \code{board\_serial} & número de serie (0 en selftest) \\
+26 & \code{u16} & \code{fw\_version} & firmware (0 en selftest) \\
+28 & \code{u32} & \code{flags} & bit 0: \code{t} calibrado por la placa; bit 1: filtro activado \\
+32 & \code{u64} & \code{start\_unix\_ns} & apertura del archivo, en ns desde 1970 \\
+40 & \code{char[64]} & \code{comment} & configuración en texto \\
+104 & \code{u8[24]} & \code{reserved} & ceros \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+El comentario tiene la forma
+
+\begin{lstlisting}[style=shell]
+thr=-125mV pos=301ns freq=0.600GHz negEdge=1 filt=RRIV/50ns
+\end{lstlisting}
+
+donde \code{pos} es la posición del pulso que se usó y \code{filt} es \code{no} o
+las letras de los cuatro canales (R, I, V) y la ventana. Los archivos de la versión
+1 dicen \code{delay=} en lugar de \code{pos=}: ese número es el retardo que se le
+pasaba a la placa, contado desde el final de la ventana.
+
+\subsection{Evento}
+
+\begin{center}
+\small
+\begin{tabular}{rrl>{\raggedright\arraybackslash}p{7.4cm}}
+\toprule
+Offset & Tipo & Campo & Descripción \\
+\midrule
+0 & \code{u64} & \code{unix\_ns} & instante en que se detectó el trigger \\
+8 & \code{u32} & \code{event\_index} & número de trigger en la corrida (cuenta también los descartados) \\
+12 & \code{u16} & \code{trigger\_cell} & celda de trigger \\
+14 & \code{u16} & \code{flags} & bit 0: saturado; bits 1 a 4: pulso en CH1 a CH4 \\
+16 & \code{f32[1024][5]} & datos & \{t[ns], ch1, ch2, ch3, ch4\} por muestra, en mV \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+El tamaño de un evento es $16 + 1024 \times 5 \times 4 = 20\,496$ bytes y el del
+archivo, para $N$ eventos, $128 + N \times 20\,496$.
+
+\begin{nota}
+La versión 2 tiene el mismo tamaño y orden que la 1. Lo único nuevo son bits que
+antes valían cero (los bits 1 a 4 del evento y los \code{flags} del archivo). Los
+bits de pulso se calculan con los umbrales \code{UMBRAL\_CHn\_MV} aunque el filtro
+esté desactivado.
+\end{nota}
+
+\subsection{Archivo \code{\_info.txt}}
+
+Junto a los \code{.bin} de cada corrida queda un archivo de texto con el mismo
+prefijo. Se escribe al arrancar con la configuración completa y, al terminar bien,
+se le agrega el resumen:
+
+\begin{lstlisting}[style=shell]
+Resumen de la corrida run_20261114_133529:
+  duracion             : 3600.2 s (1.00 horas)
+  triggers de CH1      : 912 (0.253 por seg)
+  eventos guardados    : 118 (0.033 por seg)
+  descartados          : 794
+      falta un pulso REQUERIDO   : 781
+      fuera de la ventana        : 9
+      pulso en un canal VETO     : 4
+  guardados y saturados: 0
+  archivos .bin        : 5, en /home/.../nuevo_codigo/medidas
+  escritura            : OK, los 118 eventos estan en disco
+\end{lstlisting}
+
+(Los números de este ejemplo son ilustrativos.) Para calcular tasas o eficiencias
+hacen falta la duración y el total de triggers, que no se pueden sacar de los
+\code{.bin} si hubo filtro.
+
+%=====================================================================
+\section{Uso}
+%=====================================================================
+
+\subsection{Modos}
+
+\begin{lstlisting}[style=shell]
+./medir.sh                  # compila si hace falta y mide hasta Ctrl+C
+./medir.sh --selftest N     # N triggers inventados, sin placa
+./build/drs_muones --help
+\end{lstlisting}
+
+Al arrancar se imprime la configuración efectiva:
+
+\begin{lstlisting}[style=shell]
+Placa DRS4 serie #2566, firmware 21305
+
+Configuracion (se cambia en src/config.h):
+  carpeta de salida : /home/.../nuevo_codigo/medidas
+  archivo nuevo cada: 15 min
+  frecuencia        : 0.6024 GHz (pedida 0.600) -> ventana de 1700 ns, una muestra cada 1.66 ns
+  trigger           : CH1, umbral -125 mV, pulsos negativos
+  posicion del pulso: 300 ns desde el comienzo de la ventana (pedida 300; alcanzable 217 a 1630; 240 ticks)
+  filtro            : desactivado (se guarda todo lo que dispara CH1)
+  cola en RAM       : 2000 eventos (41 MB)
+
+Midiendo. Para terminar: Ctrl+C (una sola vez; espera a que guarde todo).
+
+[12:31:05] triggers 342 (0.25 por seg) | guardados 342 | descartados 0 | cola 0/2000 | run_20261114_121500_idx0.bin
+\end{lstlisting}
+
+\subsection{Modo selftest}
+
+\code{--selftest N} no usa la placa: genera $N$ eventos con pulsos inventados y los
+pasa por el mismo filtro y la misma escritura. CH1 siempre tiene pulso, en la
+posición configurada; CH2 lo tiene en coincidencia el 60\,\% de las veces y muy
+tarde el 10\,\%; CH3 el 50\,\%; CH4 el 5\,\%. Sirve para probar un cambio de
+configuración y para tener archivos con los que practicar los scripts. La secuencia
+es siempre la misma.
+
+\subsection{Cómo cortar una corrida}
+
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+Acción & Señal & Comportamiento \\
+\midrule
+Ctrl+C & SIGINT & guarda lo que queda en la cola y cierra el archivo \\
+\code{kill PID} & SIGTERM & ídem \\
+corte de SSH & SIGHUP & ídem \\
+segundo corte (después de $\geq$ 1\,s) & -- & salida inmediata, puede perder eventos \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+El resumen final dice si todos los eventos guardados llegaron al disco.
+
+\begin{aviso}
+Para corridas largas por SSH, usar \code{tmux} para que la medición no dependa de la
+conexión:
+\begin{lstlisting}[style=shell]
+tmux new -s muones
+./medir.sh
+# Ctrl+B, D para desacoplar; tmux attach -t muones para volver
+\end{lstlisting}
+\end{aviso}
+
+\subsection{Qué mirar para saber que está midiendo bien}
+
+\begin{itemize}[itemsep=2pt]
+  \item \code{triggers} crece a un ritmo coherente con la tasa esperada.
+  \item \code{cola} se mantiene cerca de cero: el disco sigue el ritmo.
+  \item Con filtro, \code{guardados} crece; si queda en cero, el filtro descarta
+        todo (probar con \code{IMPRIMIR\_CADA\_EVENTO 1}).
+\end{itemize}
+
+%=====================================================================
+\section{Lectura de datos en Python}
+%=====================================================================
+
+Los ejemplos están en \code{scripts/}, y \code{scripts/LEEME.md} explica el formato
+desde cero. Son scripts planos: arriba tienen las líneas a editar y se corren con
+\code{python3 nombre.py} parado en \code{scripts/}.
+
+\begin{center}
+\begin{tabular}{lp{9.5cm}}
+\toprule
+Script & Qué hace \\
+\midrule
+\code{01\_ver\_un\_evento.py} & Lee el encabezado, lee los eventos y grafica uno. Comentado paso a paso. \\
+\code{02\_filtrar\_eventos.py} & Aplica el criterio del filtro a una carpeta de archivos ya medidos, cuenta cuántos pasan y, si se pide, los guarda en archivos nuevos. \\
+\code{03\_exportar\_a\_texto.py} & Pasa un evento a texto con columnas. \\
+\code{04\_tasa\_por\_hora.py} & Tasa de eventos según la hora del día y a lo largo de la medición, a partir de la hora guardada en cada evento. \\
+\code{read\_bin.py} & Corrección temporal por archivo (ver \code{correccion\_temporal.html}). \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Lo esencial de la lectura:
+
+\begin{lstlisting}[style=py]
+molde = np.dtype([('hora', '<u8'), ('numero', '<u4'), ('celda', '<u2'),
+                  ('marcas', '<u2'), ('datos', '<f4', (1024, 5))])
+eventos = np.fromfile(archivo, dtype=molde, offset=128)
+
+t   = eventos[0]['datos'][:, 0]     # tiempos del primer evento, en ns
+ch1 = eventos[0]['datos'][:, 1]     # CH1 del primer evento, en mV
+\end{lstlisting}
+
+Con todos los eventos a la vez:
+
+\begin{lstlisting}[style=py]
+horas     = eventos['hora']                      # ns desde 1970
+minimos   = eventos['datos'][:, :, 1].min(axis=1)  # minimo de CH1 en cada evento
+saturados = eventos['marcas'] & 1                # distinto de 0 si saturo
+con_ch2   = eventos['marcas'] & 4                # distinto de 0 si CH2 tuvo pulso
+\end{lstlisting}
+
+El campo \code{hora} son los nanosegundos desde el 1/1/1970 (UTC), según el reloj de
+la computadora en el momento en que detectó el trigger. Se pasa a fecha con
+\code{datetime.datetime.fromtimestamp(hora / 1e9)}. Si esa computadora no tiene la
+hora bien puesta (una Raspberry Pi sin internet la pierde al apagarse), las horas
+guardadas están mal: conviene revisarla con \code{date} antes de medir.
+
+Para archivos muy grandes, \code{np.memmap(archivo, dtype=molde, mode='r',
+offset=128)} hace lo mismo sin cargar todo en memoria.
+
+%=====================================================================
+\section{Problemas frecuentes}
+%=====================================================================
+
+\begin{description}[style=nextline,itemsep=4pt]
+  \item[\code{ERROR: no se pudo compilar}]
+    Casi siempre es un valor mal escrito en \code{config.h}. El mensaje muestra la
+    línea. Errores típicos: coma en lugar de punto decimal, una comilla que falta,
+    \code{REQUERIDO} mal escrito.
+
+  \item[\code{No se encontro ninguna placa DRS4.}]
+    La placa no está conectada, no tiene alimentación USB suficiente
+    ($\sim$500\,mA) o faltan permisos. Probar \code{lsusb} y revisar la regla de
+    udev. Para probar sin hardware, \code{--selftest}.
+
+  \item[\code{ERROR: POSICION\_PULSO\_NS ... no entra en la ventana}]
+    Se pidió una posición más grande que la duración de la ventana a esa
+    frecuencia. El mensaje indica el rango válido.
+
+  \item[\code{triggers} no aumenta]
+    No llegan pulsos que crucen el umbral. Revisar \code{UMBRAL\_TRIGGER\_MV},
+    \code{PULSOS\_NEGATIVOS} y el cableado.
+
+  \item[\code{triggers} aumenta pero \code{guardados} no]
+    El filtro descarta todo. Con \code{IMPRIMIR\_CADA\_EVENTO 1} se ve el motivo
+    de cada descarte.
+
+  \item[Los archivos no aparecen donde se esperaba]
+    La carpeta de salida es relativa al lugar desde donde se corre. Al arrancar se
+    imprime la ruta completa.
+
+  \item[La cola está siempre llena]
+    El disco no sigue la tasa de triggers: activar el filtro, subir el umbral o
+    usar un disco más rápido.
+
+  \item[El último archivo quedó incompleto]
+    El proceso murió sin poder cerrar (\code{kill -9}, corte de luz) o el disco se
+    llenó. Los eventos completos que haya se pueden leer igual; la cantidad es la
+    parte entera de (tamaño $-$ 128)/20\,496.
+
+  \item[\code{Wrong firmware version}]
+    Aviso de la librería con firmwares viejos. No impide medir.
+\end{description}
+
+%=====================================================================
+\appendix
+\section{Nombres anteriores de los parámetros}
+%=====================================================================
+
+\begin{center}
+\small
+\begin{tabular}{ll}
+\toprule
+Antes (octubre 2026) & Ahora \\
+\midrule
+\code{OUT\_DIR} & \code{CARPETA\_SALIDA} \\
+\code{ROTATE\_MINUTES} & \code{MINUTOS\_POR\_ARCHIVO} \\
+\code{SAMPLING\_GHZ} & \code{FRECUENCIA\_GHZ} \\
+\code{THRESHOLD\_MV} & \code{UMBRAL\_TRIGGER\_MV} \\
+\code{TRIGGER\_NEGATIVE\_EDGE} & \code{PULSOS\_NEGATIVOS} \\
+\code{TRIGGER\_DELAY\_NS} & reemplazado por \code{POSICION\_PULSO\_NS} (otro significado) \\
+\code{OVERLOAD\_MV} & \code{SATURACION\_MV} \\
+\code{QUEUE\_EVENTS} & \code{EVENTOS\_EN\_COLA} \\
+\code{FSYNC\_ON\_ROTATE} & \code{FORZAR\_ESCRITURA\_A\_DISCO} \\
+\code{STATUS\_SECONDS} & \code{SEGUNDOS\_ENTRE\_ESTADOS} \\
+\code{PRINT\_EVENTS} & \code{IMPRIMIR\_CADA\_EVENTO} \\
+\code{POLL\_US} & \code{ESPERA\_SONDEO\_US} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Para repetir una medición vieja hecha con \code{TRIGGER\_DELAY\_NS} $= D$ a
+0{,}6\,GHz, la posición equivalente es aproximadamente $1630 - 0{,}89\,D$ (con el
+tope de 220\,ns para $D \geq 1580$).
+
+\section{Paso temporal y ventana según la frecuencia}
+
+\begin{center}
+\begin{tabular}{rrrr}
+\toprule
+$f_s$ (GSPS) & Paso (ns) & Ventana de 1024 bins (ns) & Bins en 100\,ns \\
+\midrule
+0.6 & 1.66 & 1700 & 60 \\
+1.0 & 1.00 & 1024 & 100 \\
+2.0 & 0.50 & 512 & 200 \\
+5.0 & 0.20 & 205 & 500 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{Referencias}
+
+\begin{itemize}[itemsep=2pt]
+  \item Repositorio oficial: \url{https://gitea.psi.ch/WaveDAQ/drs4eb} (librería
+        \code{DRS.cpp}/\code{DRS.h}, ejemplo \code{drs\_exam.cpp}).
+  \item \code{drs4eb/docs/manual/manual\_rev50.pdf}: manual de la placa V5.
+  \item \code{DRS4\_rev09\_2.pdf}: datasheet del chip DRS4.
+  \item \code{NOTAS\_DRS4\_muones.md}: notas del laboratorio.
+  \item \code{scripts/correccion\_temporal.html}: corrección de tiempos por archivo.
+\end{itemize}
+
+\end{document}
